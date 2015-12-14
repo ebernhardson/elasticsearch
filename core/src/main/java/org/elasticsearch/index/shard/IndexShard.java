@@ -200,7 +200,8 @@ public class IndexShard extends AbstractIndexShardComponent {
     public IndexShard(ShardId shardId, IndexSettings indexSettings, ShardPath path, Store store, IndexCache indexCache,
                       MapperService mapperService, SimilarityService similarityService, IndexFieldDataService indexFieldDataService,
                       @Nullable EngineFactory engineFactory,
-                      IndexEventListener indexEventListener, IndexSearcherWrapper indexSearcherWrapper, NodeServicesProvider provider) {
+                      IndexEventListener indexEventListener, IndexSearcherWrapper indexSearcherWrapper, NodeServicesProvider provider,
+                      ShardSearchStats searchService) {
         super(shardId, indexSettings);
         final Settings settings = indexSettings.getSettings();
         this.inactiveTime = settings.getAsTime(INDEX_SHARD_INACTIVE_TIME_SETTING, settings.getAsTime(INDICES_INACTIVE_TIME_SETTING, TimeValue.timeValueMinutes(5)));
@@ -220,7 +221,7 @@ public class IndexShard extends AbstractIndexShardComponent {
         this.indexingService = new ShardIndexingService(shardId, indexSettings);
         this.getService = new ShardGetService(indexSettings, this, mapperService);
         this.termVectorsService = provider.getTermVectorsService();
-        this.searchService = new ShardSearchStats(settings);
+        this.searchService = searchService;
         this.shardWarmerService = new ShardIndexWarmerService(shardId, indexSettings);
         this.indicesQueryCache = provider.getIndicesQueryCache();
         this.shardQueryCache = new ShardRequestCache(shardId, indexSettings);

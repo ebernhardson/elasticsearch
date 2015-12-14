@@ -48,6 +48,7 @@ import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.ParsedQuery;
 import org.elasticsearch.index.query.QueryShardContext;
+import org.elasticsearch.index.search.stats.ShardSearchStats;
 import org.elasticsearch.index.shard.*;
 import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.index.store.IndexStore;
@@ -65,6 +66,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.unmodifiableMap;
@@ -92,6 +94,7 @@ public final class IndexService extends AbstractIndexComponent implements IndexC
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean deleted = new AtomicBoolean(false);
     private final IndexSettings indexSettings;
+    private final Function<Settings, ShardSearchStats> shardStatsProvider;
 
     @Inject
     public IndexService(IndexSettings indexSettings, NodeEnvironment nodeEnv,
@@ -104,7 +107,8 @@ public final class IndexService extends AbstractIndexComponent implements IndexC
                         IndexStore indexStore,
                         IndexEventListener eventListener,
                         IndexModule.IndexSearcherWrapperFactory wrapperFactory,
-                        MapperRegistry mapperRegistry) throws IOException {
+                        MapperRegistry mapperRegistry,
+                        Function<Settings, ShardSearchStats> shardStatsProvider) throws IOException {
         super(indexSettings);
         this.indexSettings = indexSettings;
         this.analysisService = registry.build(indexSettings);
@@ -122,6 +126,7 @@ public final class IndexService extends AbstractIndexComponent implements IndexC
         this.engineFactory = engineFactory;
         // initialize this last -- otherwise if the wrapper requires any other member to be non-null we fail with an NPE
         this.searcherWrapper = wrapperFactory.newWrapper(this);
+        this.shardStatsProvider = shardStatsProvider;
     }
 
     public int numberOfShards() {
@@ -274,15 +279,20 @@ public final class IndexService extends AbstractIndexComponent implements IndexC
                 throw new IndexShardAlreadyExistsException(shardId + " already exists");
             }
 
+            ShardSearchStats shardStats = shardStatsProvider.apply(indexSettings);
+            if (shardStats == null) {
+                throw new IllegalStateException("shardStats must not be null");
+            };
+
             logger.debug("creating shard_id {}", shardId);
             // if we are on a shared FS we only own the shard (ie. we can safely delete it) if we are the primary.
             final boolean canDeleteShardContent = IndexMetaData.isOnSharedFilesystem(indexSettings) == false ||
                     (primary && IndexMetaData.isOnSharedFilesystem(indexSettings));
             store = new Store(shardId, this.indexSettings, indexStore.newDirectoryService(path), lock, new StoreCloseListener(shardId, canDeleteShardContent, () -> nodeServicesProvider.getIndicesQueryCache().onClose(shardId)));
             if (useShadowEngine(primary, indexSettings)) {
-                indexShard = new ShadowIndexShard(shardId, this.indexSettings, path, store, indexCache, mapperService, similarityService, indexFieldData, engineFactory, eventListener, searcherWrapper, nodeServicesProvider);
+                indexShard = new ShadowIndexShard(shardId, this.indexSettings, path, store, indexCache, mapperService, similarityService, indexFieldData, engineFactory, eventListener, searcherWrapper, nodeServicesProvider, shardStats);
             } else {
-                indexShard = new IndexShard(shardId, this.indexSettings, path, store, indexCache, mapperService, similarityService, indexFieldData, engineFactory, eventListener, searcherWrapper, nodeServicesProvider);
+                indexShard = new IndexShard(shardId, this.indexSettings, path, store, indexCache, mapperService, similarityService, indexFieldData, engineFactory, eventListener, searcherWrapper, nodeServicesProvider, shardStats);
             }
 
             eventListener.indexShardStateChanged(indexShard, null, indexShard.state(), "shard created");

@@ -27,6 +27,8 @@ import org.elasticsearch.index.cache.query.QueryCache;
 import org.elasticsearch.index.cache.query.index.IndexQueryCache;
 import org.elasticsearch.index.cache.query.none.NoneQueryCache;
 import org.elasticsearch.index.engine.EngineFactory;
+import org.elasticsearch.index.search.stats.ShardSearchStats;
+import org.elasticsearch.index.search.stats.ShardSearchStatsImpl;
 import org.elasticsearch.index.shard.IndexEventListener;
 import org.elasticsearch.index.shard.IndexSearcherWrapper;
 import org.elasticsearch.index.similarity.BM25SimilarityProvider;
@@ -41,6 +43,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * IndexModule represents the central extension point for index level custom implementations like:
@@ -52,6 +55,7 @@ import java.util.function.Consumer;
  *      <li>{@link IndexStore} - Custom {@link IndexStore} instances can be registered via {@link #addIndexStore(String, BiFunction)}</li>
  *      <li>{@link IndexEventListener} - Custom {@link IndexEventListener} instances can be registered via {@link #addIndexEventListener(IndexEventListener)}</li>
  *      <li>Settings update listener - Custom settings update listener can be registered via {@link #addIndexSettingsListener(Consumer)}</li>
+ *      <li>Shard stats collector - Custom stats collector can be registered via {@link #addStatsCollector(String, Function)}</li>
  * </ul>
  */
 public final class IndexModule {
@@ -61,6 +65,7 @@ public final class IndexModule {
     public static final String INDEX_QUERY_CACHE = "index";
     public static final String NONE_QUERY_CACHE = "none";
     public static final String QUERY_CACHE_TYPE = "index.queries.cache.type";
+    public static final String STATS_COLLECTOR_TYPE = "index.stats.type";
     // for test purposes only
     public static final String QUERY_CACHE_EVERYTHING = "index.queries.cache.everything";
     private final IndexSettings indexSettings;
@@ -75,6 +80,7 @@ public final class IndexModule {
     private final Map<String, BiFunction<String, Settings, SimilarityProvider>> similarities = new HashMap<>();
     private final Map<String, BiFunction<IndexSettings, IndexStoreConfig, IndexStore>> storeTypes = new HashMap<>();
     private final Map<String, BiFunction<IndexSettings, IndicesQueryCache, QueryCache>> queryCaches = new HashMap<>();
+    private final Map<String, Function<Settings, ShardSearchStats>> statsCollectors = new HashMap<>();
 
 
     public IndexModule(IndexSettings indexSettings, IndexStoreConfig indexStoreConfig, AnalysisRegistry analysisRegistry) {
@@ -83,6 +89,7 @@ public final class IndexModule {
         this.analysisRegistry = analysisRegistry;
         registerQueryCache(INDEX_QUERY_CACHE, IndexQueryCache::new);
         registerQueryCache(NONE_QUERY_CACHE, (a, b) -> new NoneQueryCache(a));
+        addStatsCollector("default", (a) -> new ShardSearchStatsImpl(a));
     }
 
     /**
@@ -185,6 +192,21 @@ public final class IndexModule {
     }
 
     /**
+     * Registers a {@link ShardSearchStats} provider for a given name
+     * @param name the providers / collectors name
+     * @param provider the provider instance
+     */
+    public void addStatsCollector(String name, Function<Settings, ShardSearchStats> provider) {
+        if (provider == null) {
+            throw new IllegalArgumentException("provider must not be null");
+        }
+        if (queryCaches.containsKey(name)) {
+            throw new IllegalArgumentException("Can't register the same [query_cache] more than once for [" + name + "]");
+        }
+        statsCollectors.put(name, provider);
+    }
+
+    /**
      * Sets a {@link org.elasticsearch.index.IndexModule.IndexSearcherWrapperFactory} that is called once the IndexService is fully constructed.
      * Note: this method can only be called once per index. Multiple wrappers are not supported.
      */
@@ -258,7 +280,12 @@ public final class IndexModule {
         final String queryCacheType = settings.getSettings().get(IndexModule.QUERY_CACHE_TYPE, IndexModule.INDEX_QUERY_CACHE);
         final BiFunction<IndexSettings, IndicesQueryCache, QueryCache> queryCacheProvider = queryCaches.get(queryCacheType);
         final QueryCache queryCache = queryCacheProvider.apply(settings, servicesProvider.getIndicesQueryCache());
+        final String statsCollectorType = settings.getSettings().get(IndexModule.STATS_COLLECTOR_TYPE, "default");
+        final Function<Settings, ShardSearchStats> statsCollectorProvider = statsCollectors.get(statsCollectorType);
+        if (statsCollectorProvider == null) {
+            throw new IllegalStateException("statsCollectorProvider must not be null");
+        }
         return new IndexService(settings, environment, new SimilarityService(settings, similarities), shardStoreDeleter, analysisRegistry, engineFactory.get(),
-                servicesProvider, queryCache, store, eventListener, searcherWrapperFactory, mapperRegistry);
+                servicesProvider, queryCache, store, eventListener, searcherWrapperFactory, mapperRegistry, statsCollectorProvider);
     }
 }

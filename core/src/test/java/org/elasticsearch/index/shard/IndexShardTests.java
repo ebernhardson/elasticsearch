@@ -1022,7 +1022,7 @@ public class IndexShardTests extends ESSingleNodeTestCase {
         ShardRouting routing = new ShardRouting(shard.routingEntry());
         shard.close("simon says", true);
         NodeServicesProvider indexServices = indexService.getIndexServices();
-        IndexShard newShard = new IndexShard(shard.shardId(), indexService.getIndexSettings(), shard.shardPath(), shard.store(), indexService.cache(), indexService.mapperService(), indexService.similarityService(), indexService.fieldData(), shard.getEngineFactory(), indexService.getIndexEventListener(), wrapper, indexServices);
+        IndexShard newShard = new IndexShard(shard.shardId(), indexService.getIndexSettings(), shard.shardPath(), shard.store(), indexService.cache(), indexService.mapperService(), indexService.similarityService(), indexService.fieldData(), shard.getEngineFactory(), indexService.getIndexEventListener(), wrapper, indexServices, shard.searchService());
         ShardRoutingHelper.reinit(routing);
         newShard.updateRoutingEntry(routing, false);
         DiscoveryNode localNode = new DiscoveryNode("foo", DummyTransportAddress.INSTANCE, Version.CURRENT);
